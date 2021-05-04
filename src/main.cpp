@@ -14,100 +14,111 @@ WC 10
 */
 
 #include <Arduino.h>
-#include <MemoryFree.h>
-#include <SPI.h>
-#include <Ethernet.h>
 #include <Wire.h>
 #include <Adafruit_MCP23017.h>
 #include "Roleta.h"
 #include "PinButton.h"
+// #include <UIPEthernet.h>
+#include <SPI.h>
+#include <Ethernet3.h>    // instead Ethernet.h
+#include <EthernetUdp3.h> // instead EthernetUdp.h for UDP functionality
 #include <PubSubClient.h>
-
+#include <EEPROM.h>
 // #include <EtherCard.h>
-#define STATIC 1
+
+#define CLIENT_ID "NANO"
+#define CLIENT_USER "HAmQTT"
+#define CLIENT_PASS "barbapapa1"
+#define PORT_MQTT 1883
+#define PUBLISH_DELAY 2000
 
 byte mac[] = {0xDE, 0xED, 0xBA, 0xFE, 0xFE, 0xED};
-IPAddress ip(172, 16, 0, 100);
-IPAddress server(172, 16, 0, 2);
+IPAddress nanoIP(192, 168, 1, 21);
+IPAddress mqttServer(192, 168, 1, 19);
+
+enum MANUAL_SWITCH
+{
+  MANUAL_NOPE,
+  MANUAL_UP,
+  MANUAL_DOWN,
+  MANUAL_OFF,
+  MANUAL_IN_PROGRESS
+};
+
+enum CMD
+{
+  UP_CMD,
+  DOWN_CMD,
+  STOP_CMD
+};
+// #define STATIC 1
+
 // char const page[] PROGMEM =
 
-bool ledState = true;
-unsigned long lastLedTime = 0;
-unsigned long blinkTime = 1000;
-unsigned long lastrlTime = 0;
-unsigned long timeToNextRL = 200;
-uint16_t BreakTimeBeetwen = 800;
+// bool ledState = true;
+// unsigned long lastLedTime = 0;
+// #define blinkTime 1000
+#define TIME_TO_NEXT_RL 300
+#define BREAK_TIME_BETWEEN_NEXT_RL 1100
 
-#define MAX_RELAY_ON_TIME 4
-#define TOTAL_WINDOW_NUMB 9
+#define MAX_RELAY_ON_TIME 1
+#define TOTAL_WINDOW_NUMB 10
+#define TOTAL_UNCONNECT 10
+#define RECONNECT_TIME 2000
+#define RESET_PIN 4
 
-bool lastPower = true;
+uint8_t StartupShutter;
+uint8_t reconnectNumb = 0;
+byte saveCMD[TOTAL_WINDOW_NUMB] = {
+    STOP_CMD,
+    STOP_CMD,
+    STOP_CMD,
+    STOP_CMD,
+    STOP_CMD,
+    STOP_CMD,
+    STOP_CMD,
+    STOP_CMD,
+    STOP_CMD,
+    STOP_CMD};
+
+#define INIT_EEPROM_VAR 1
+
+bool lastPower = false;
 bool bAllAutoUp = false;
 bool bAllAutoDown = false;
 uint8_t inProgressNow = 0;
 unsigned long LastSwitchOnTime;
-int lastSwitchedRelay = -1;
-
-#define PIN_00 0
-#define PIN_01 1
-#define PIN_04 4
-#define PIN_05 5
-#define PIN_06 6
-#define PIN_07 7
-#define PIN_08 8
-#define PIN_09 9
-#define PIN_10 10
-#define PIN_11 11
-#define PIN_12 12
-#define PIN_13 A0
-#define PIN_14 A1
-#define PIN_15 A2
-#define PIN_16 A3
-#define PIN_17 A6
-#define PIN_18 A7
+unsigned long LastOnlinePublish;
+unsigned long LastEEpromWriteTime;
+int lastSwitchedRelay = 0;
 
 Adafruit_MCP23017 mcp1; // PIERWSZY MCP23017
 Adafruit_MCP23017 mcp2; // DRUGI MCP23017
-Roleta roleta[11] = {
-    Roleta(1, &mcp1, 9, 1),    //    SYPIALNIA_PARTER_1"
-    Roleta(2, &mcp1, 10, 2),   //    SYPIALNIA_PARTER_2"
-    Roleta(3, &mcp2, 5, 10),   //    LAZIENKA"
-    Roleta(4, &mcp1, 14, 6),   //    KUCHNIA_1"
-    Roleta(5, &mcp1, 15, 7),   //    KUCHNIA_2"
-    Roleta(6, &mcp1, 12, 4),   //    SALON_FRONT"
-    Roleta(7, &mcp1, 13, 5),   //    SALON_BALKON"
-    Roleta(8, &mcp1, 11, 3),   //    WSCHOD_PIETRO"
-    Roleta(9, &mcp2, 6, 9),    //    SYPIALNIA_PIETRO"
-    Roleta(10, &mcp2, 4, 11),  //    ZACHOD"
-    Roleta(11, &mcp2, 0, 15)}; //    WC "
 
-uint8_t menuChoice = 0;
+// uint8_t menuChoice = 0;
 
 //   *************************************************
 //  *  PROTOTYPES
 // *************************************************
 
+// void (*resetFunc)(void) = 0; //declare reset function @ address 0
+void resetFunc(void);
 void callback(char *topic, byte *payload, unsigned int length);
-void menub(int tt);
-void menu();
-void goToUp(uint8_t _roleta);
-void goToDown(uint8_t _roleta);
-void rialEvent();
+bool reconnect();
+String getValue(String data, char separator, int index);
+void checkManualState();
+void Avaible();
+// void menub(int tt);
+// void menu();
+// void goToUp(uint8_t _roleta);
+// void goToDown(uint8_t _roleta);
+// void rialEvent();
 // void screen(uint8_t);
 void chckBT_event();
-void blinkLed();
-void allForceStop();  //all stop after manual release        -state 0
-void allAutoUp();     //single click                        -state 1
-void allAutoDown();   //single click                        -state 2
-void allHalfUp();     //double click                        -state 3
-void allHalfDown();   //double click                        -state 4
-void allManualUp();   //long click                          -state 5
-void allManualDown(); //long click                          -state 6
-void checkHandle();
+void allForceStop(); //all stop after manual release        -state 0
 
-uint8_t handleState = 0;
-uint8_t lastHandleState = 99;
-#define clearHandleState() handleState &= 0x00
+uint8_t manualState = 0, LastManualState = 99;
+unsigned long lastReconnectAttempt = 0;
 
 #define BTN_UP 2
 #define BTN_DOWN 3
@@ -118,92 +129,210 @@ PinButton bt_down(BTN_DOWN);
 EthernetClient ethClient;
 PubSubClient client(ethClient);
 
-long lastReconnectAttempt = 0;
+Roleta roleta[TOTAL_WINDOW_NUMB] = {
+    Roleta(0, &client, &mcp1, 9, 1, 22000, 16000),   //    SYPIALNIA_PARTER_1"
+    Roleta(1, &client, &mcp1, 10, 2, 22000, 16000),  //    SYPIALNIA_PARTER_2"
+    Roleta(2, &client, &mcp2, 5, 10, 22000, 16000),  //    LAZIENKA"
+    Roleta(3, &client, &mcp1, 14, 6, 22000, 16000),  //    KUCHNIA_1"
+    Roleta(4, &client, &mcp1, 15, 7, 22000, 16000),  //    KUCHNIA_2"
+    Roleta(5, &client, &mcp1, 12, 4, 22000, 16000),  //    SALON_FRONT"
+    Roleta(6, &client, &mcp1, 13, 5, 22000, 16000),  //    SALON_BALKON"
+    Roleta(7, &client, &mcp1, 11, 3, 22000, 16000),  //    WSCHOD_PIETRO"
+    Roleta(8, &client, &mcp2, 6, 9, 22000, 16000),   //    SYPIALNIA_PIETRO"
+    Roleta(9, &client, &mcp2, 4, 11, 22000, 16000)}; //    ZACHOD"
+                                                     // Roleta(10, &client, &mcp2, 0, 15, 22000, 16000)}; //    WC "
+
+void GetEEpromData()
+{
+  byte flag = EEPROM.read(0);
+
+  if (!flag)
+  {
+    EEPROM.get(1, saveCMD);
+  }
+  else
+  {
+    EEPROM.write(0, 1);
+  }
+}
+
+void PutEEpromData(uint16_t lTime)
+{
+  if (millis() - LastEEpromWriteTime > lTime)
+  {
+    EEPROM.put(1, saveCMD);
+  }
+}
 
 boolean reconnect()
 {
-  if (client.connect("arduinoClient"))
+  if (client.connect(CLIENT_ID, CLIENT_USER, CLIENT_PASS))
   {
-    // Once connected, publish an announcement...
-    client.publish("outTopic", "hello world");
-    // ... and resubscribe
-    client.subscribe("inTopic");
+    StartupShutter = TOTAL_WINDOW_NUMB + 1;
+    for (size_t i = 0; i < TOTAL_WINDOW_NUMB; i++)
+    {
+      char *command_topic = (char *)malloc(sizeof(char) * 14);
+      snprintf_P(command_topic, 14, PSTR("roleta/%i/cmd"), i);
+      client.subscribe(command_topic, 1);
+      Serial.print("Subscribe: ");
+      Serial.println(command_topic);
+      free(command_topic);
+    }
+    char *command_topic = (char *)malloc(sizeof(char) * 20);
+    snprintf_P(command_topic, 20, PSTR("roleta/all/cmd"));
+    client.subscribe(command_topic, 1);
+    Serial.print("Subscribe: ");
+    Serial.println(command_topic);
+    free(command_topic);
   }
   return client.connected();
 }
 
-void callback(char *topic, byte *payload, unsigned int length)
+void resetFunc()
 {
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-  for (int i = 0; i < length; i++)
-  {
-    Serial.print((char)payload[i]);
-  }
-  Serial.println();
+  PutEEpromData(60000);
+  digitalWrite(RESET_PIN, LOW);
 }
 
-void blinkLed()
+String getValue(String data, char separator, int index)
 {
-  if (millis() - lastLedTime > blinkTime)
+  int found = 0;
+  int strIndex[] = {0, -1};
+  int maxIndex = data.length() - 1;
+
+  for (int i = 0; i <= maxIndex && found <= index; i++)
   {
-    ledState = !ledState;
-    digitalWrite(13, ledState);
-    lastLedTime = millis();
-    // Serial.print("freeMemory()=");
-    // Serial.println(freeMemory());
+    if (data.charAt(i) == separator || i == maxIndex)
+    {
+      found++;
+      strIndex[0] = strIndex[1] + 1;
+      strIndex[1] = (i == maxIndex) ? i + 1 : i;
+    }
+  }
+
+  return found > index ? data.substring(strIndex[0], strIndex[1]) : "";
+}
+
+void callback(char *topic, byte *payload, unsigned int length)
+{
+  bool all;
+  uint8_t roleta_nb;
+  String topicMsg = getValue(topic, '/', 1);
+  if (topicMsg.equals("all"))
+  {
+    all = true;
+  }
+  else
+  {
+    all = false;
+    roleta_nb = topicMsg.toInt();
+  }
+
+  if (StartupShutter == 0)
+  {
+    // Serial.println(length);
+    // Serial.println((byte)payload[length - 1]);
+
+    char *ch_payload = (char *)calloc(length + 1, sizeof(char));
+
+    memcpy(ch_payload, payload, length);
+
+    // ch_payload[strlen(ch_payload) - 1] = 0x00;
+    Serial.println(topic);
+    Serial.println(ch_payload);
+
+    // Serial.println(strcmp(ch_payload, "OPEN"));
+    // Serial.println((byte)ch_payload[4]);
+    // Serial.println(topic);
+
+    if (strcmp_P(ch_payload, PSTR("OPEN")) == 0)
+    {
+      if (all)
+      {
+        if (manualState == MANUAL_NOPE)
+        {
+          manualState = MANUAL_UP;
+        }
+      }
+      else
+      {
+        roleta[roleta_nb].MoveUP();
+      }
+    }
+    else if (strcmp_P(ch_payload, PSTR("CLOSE")) == 0)
+    {
+      if (all)
+      {
+        if (manualState == MANUAL_NOPE)
+        {
+          manualState = MANUAL_DOWN;
+        }
+      }
+      else
+      {
+        roleta[roleta_nb].MoveDown();
+      }
+    }
+    else if (strcmp_P(ch_payload, PSTR("STOP")) == 0)
+    {
+      if (all)
+      {
+        manualState = MANUAL_OFF;
+      }
+      else
+      {
+        roleta[roleta_nb].MoveStop();
+      }
+    }
+
+    free(ch_payload);
+  }
+  else
+  {
+    StartupShutter--;
   }
 }
+
+void Avaible()
+{
+  if (client.connected())
+  {
+    if (millis() - LastOnlinePublish > 60000 || LastOnlinePublish == 0)
+    {
+      LastOnlinePublish = millis();
+
+      for (size_t i = 0; i < TOTAL_WINDOW_NUMB; i++)
+      {
+        char *availability_topic = (char *)malloc(sizeof(char) * 23);
+        snprintf_P(availability_topic, 23, PSTR("roleta/%i/availability"), i);
+        client.publish(availability_topic, "online");
+        free(availability_topic);
+      }
+      char *availability_topic = (char *)malloc(sizeof(char) * 25);
+      snprintf_P(availability_topic, 25, PSTR("roleta/all/availability"));
+      client.publish(availability_topic, "online");
+      free(availability_topic);
+    }
+  }
+}
+
 void setup()
 {
   Serial.begin(9600);
-  pinMode(13, OUTPUT);
 
-  client.setServer(server, 1883);
+  client.setServer(mqttServer, PORT_MQTT);
   client.setCallback(callback);
 
-  Ethernet.begin(mac, ip);
-  delay(1500);
+  Serial.println(F("Connect to network"));
+  Ethernet.init(10);
+  Ethernet.begin(mac, nanoIP);
+  Serial.println(Ethernet.localIP());
+  // delay(800);
 
-  //   Serial.println("\n[backSoon]");
-  //   if (ether.begin(sizeof Ethernet::buffer, mymac, SS) == 0)
-  //     Serial.println("Failed to access Ethernet controller");
-  // #if STATIC
-  //   ether.staticSetup(myip, gwip);
-  // #else
-  //   if (!ether.dhcpSetup())
-  //     Serial.println("DHCP failed");
-  // #endif
-  //   ether.printIp("IP:  ", ether.myip);
-  //   ether.printIp("GW:  ", ether.gwip);
-  //   ether.printIp("DNS: ", ether.dnsip);
-
-  delay(1000);
-
-  pinMode(PIN_00, INPUT_PULLUP);
-  pinMode(PIN_01, INPUT_PULLUP);
-  pinMode(PIN_04, INPUT_PULLUP);
-  pinMode(PIN_05, INPUT_PULLUP);
-  pinMode(PIN_06, INPUT_PULLUP);
-  pinMode(PIN_07, INPUT_PULLUP);
-  pinMode(PIN_08, INPUT_PULLUP);
-  pinMode(PIN_09, INPUT_PULLUP);
-  pinMode(PIN_10, INPUT_PULLUP);
-  pinMode(PIN_11, INPUT_PULLUP);
-  pinMode(PIN_12, INPUT_PULLUP);
-  pinMode(PIN_13, INPUT_PULLUP);
-  pinMode(PIN_14, INPUT_PULLUP);
-  pinMode(PIN_15, INPUT_PULLUP);
-  pinMode(PIN_16, INPUT_PULLUP);
-  pinMode(PIN_17, INPUT_PULLUP);
-  pinMode(PIN_18, INPUT_PULLUP);
-
-  // screen(1);
   mcp1.begin();  // MCP - brak adres 0x20
   mcp2.begin(1); // MCP - brak adres 0x21
 
-  //aby nie wpisywać 16 razy dla każdego wyjścia mcp.pinMode(0, OUTPUT) dodamy pętle
+  //ustawienie mcp
   for (byte j = 0; j <= 15; j++)
   {
     mcp1.pinMode(j, OUTPUT);    // ustaw pin jako wyjście
@@ -211,91 +340,25 @@ void setup()
     mcp2.pinMode(j, OUTPUT);    // ustaw pin jako wyjście
     mcp2.digitalWrite(j, HIGH); // ustaw pin na stan wysoki
   }
+  lastReconnectAttempt = 0;
+  LastOnlinePublish = 0;
 }
 
-// void screen(uint8_t side)
-// {
-//   for (size_t i = 0; i < 10; i++)
-//   {
-//     Serial.println();
-//   }
-
-//   if (side == 1)
-//   {
-//     Serial.println("Wybierz kierunek:");
-//     Serial.println("[1] - góra");
-//     Serial.println("[2] - dół");
-//   }
-//   else if (side == 2)
-//   {
-//     Serial.println("Wybierz okno:");
-//     Serial.println(" [0] - SYPIALNIA_PARTER_1");
-//     Serial.println(" [1] - SYPIALNIA_PARTER_2");
-//     Serial.println(" [2] - WSCHOD_PIETRO");
-//     Serial.println(" [3] - SALON_FRONT");
-//     Serial.println(" [4] - SALON_BALKON");
-//     Serial.println(" [5] - KUCHNIA_1");
-//     Serial.println(" [6] - KUCHNIA_2");
-//     Serial.println(" [7] - SYPIALNIA_PIETRO");
-//     Serial.println(" [8] - LAZIENKA");
-//     Serial.println(" [9] - ZACHOD");
-//     Serial.println(" [10] - WC ");
-//   }
-// }
-
-// void menu(int input)
-// {
-//   if (!(bool)menuChoice)
-//   {
-//     if (input == 1 || input == 2)
-//     {
-//       menuChoice = input;
-//       screen(2);
-//     }
-//   }
-//   else
-//   {
-//     if (input > 0 && input < 11)
-//     {
-//       if (menuChoice == 1)
-//       {
-//         roleta[input].AutoUp();
-//       }
-//       else if (menuChoice == 2)
-//       {
-//         roleta[input].AutoDown();
-//       }
-//     }
-//     menuChoice = 0;
-//     screen(1);
-//   }
-// }
-// void serialEvent()
-// {
-//   if (Serial.available())
-//   {
-//     String s = Serial.readString();
-//     int i = s.toInt();
-//     menu(i);
-//   }
-// }
 void switchPower(bool onOff)
 {
   if (lastPower != !onOff)
   {
     lastPower = !onOff;
     mcp2.digitalWrite(14, lastPower);
-    delay(100);
   }
 }
 
-void chckRolety()
+void roletyLOOP()
 {
   inProgressNow = 0;
   for (int i = 0; i < TOTAL_WINDOW_NUMB; i++)
   {
-    roleta[i].Update();
-    if (roleta[i].isRunning())
+    if (roleta[i].Loop())
     {
       inProgressNow++;
     }
@@ -305,282 +368,131 @@ void chckRolety()
 
 void chckBT_event()
 {
-  if (bt_up.isSingleClick())
+  if ((manualState != MANUAL_NOPE) && (bt_up.isSingleClick() || bt_down.isSingleClick()))
   {
-    if (handleState > 0)
-    {
-      allForceStop();
-    }
-    else
-    {
-      allAutoUp();
-      handleState = 1;
-    }
+    manualState = MANUAL_OFF;
   }
-  if (bt_down.isSingleClick())
+  else if (manualState == MANUAL_NOPE)
   {
-    if (handleState > 0)
+    if (bt_up.isSingleClick())
     {
-      allForceStop();
+      manualState = MANUAL_UP;
     }
-    else
+    else if (bt_down.isSingleClick())
     {
-      allAutoDown();
-      handleState = 2;
-    }
-  }
-
-#ifdef POTEM
-
-  if (bt_up.isDoubleClick())
-  {
-    if (handleState > 0)
-    {
-
-      allForceStop();
-    }
-    else
-    {
-      allHalfUp();
-      handleState = 3;
-    }
-  }
-  if (bt_down.isDoubleClick())
-  {
-    if (handleState > 0)
-    {
-      allForceStop();
-    }
-    else
-    {
-      allHalfUp();
-      handleState = 4;
-    }
-  }
-  if (bt_up.isReleased())
-  {
-    if (handleState == 5)
-    {
-      allForceStop();
-    }
-  }
-  if (bt_down.isReleased())
-  {
-    if (handleState == 6)
-    {
-      allForceStop();
-    }
-  }
-  if (bt_up.isLongClick())
-  {
-    if (handleState > 0)
-    {
-      allForceStop();
-    }
-    else
-    {
-      allManualUp();
-      handleState = 5;
-    }
-  }
-  if (bt_down.isLongClick())
-  {
-    if (handleState > 0)
-    {
-      allForceStop();
-    }
-    else
-    {
-      allManualUp();
-      handleState = 6;
-    }
-  }
-#endif // DEBUG
-}
-
-void allForceStop()
-{
-  for (size_t i = 0; i < TOTAL_WINDOW_NUMB; i++)
-  {
-    roleta[i].ForceStop();
-  }
-  bAllAutoUp = false;
-  bAllAutoDown = false;
-  handleState = 0;
-}
-void allAutoUp()
-{
-
-  if (!bAllAutoUp)
-  {
-    bAllAutoUp = true;
-  }
-}
-void allAutoDown()
-{
-  if (!bAllAutoDown)
-  {
-    bAllAutoDown = true;
-  }
-  // for (size_t i = 0; i < TOTAL_WINDOW_NUMB; i++)
-  // {
-  //   roleta[i].AutoDown();
-  // }
-}
-void allHalfUp()
-{
-  // for (size_t i = 0; i < TOTAL_WINDOW_NUMB; i++)
-  // {
-  //   roleta[i].HalfUp();
-  // }
-}
-void allHalfDown()
-{
-  // for (size_t i = 0; i < TOTAL_WINDOW_NUMB; i++)
-  // {
-  //   roleta[i].HalfDown();
-  // }
-}
-void allManualUp()
-{
-  // for (size_t i = 0; i < TOTAL_WINDOW_NUMB; i++)
-  // {
-  //   roleta[i].ManualUp();
-  // }
-}
-void allManualDown()
-{
-  // for (size_t i = 0; i < TOTAL_WINDOW_NUMB; i++)
-  // {
-  //   roleta[i].ManualDown();
-  // }
-}
-void checkState()
-{
-  if (lastHandleState != handleState)
-  {
-    lastHandleState = handleState;
-    switch (handleState)
-    {
-    case 0:
-      blinkTime = 2000;
-      break;
-    case 1:
-      blinkTime = 800;
-      break;
-    case 2:
-      blinkTime = 800;
-      break;
-    case 3:
-      blinkTime = 350;
-      break;
-    case 4:
-      blinkTime = 350;
-      break;
-    case 5:
-      blinkTime = 100;
-      break;
-    case 6:
-      blinkTime = 70;
-      break;
-
-    default:
-      break;
+      manualState = MANUAL_DOWN;
     }
   }
 }
 
-void checkAllAutoUp()
+void checkManualState()
 {
-  if (bAllAutoUp)
+  switch (manualState)
   {
-    if (inProgressNow < MAX_RELAY_ON_TIME)
+  case MANUAL_UP:
+    // Serial.println(F("MANUAL_UP"));
+    // if (inProgressNow <= MAX_RELAY_ON_TIME)
+    // {
+    if (millis() - LastSwitchOnTime > BREAK_TIME_BETWEEN_NEXT_RL)
     {
-      if (lastSwitchedRelay < TOTAL_WINDOW_NUMB)
-      {
-        if (millis() - LastSwitchOnTime > BreakTimeBeetwen)
-        {
-          lastSwitchedRelay++;
-          roleta[lastSwitchedRelay].AutoUp();
-          LastSwitchOnTime = millis();
-        }
-      }
-      else
-      {
-        lastSwitchedRelay = -1;
-        bAllAutoUp = false;
-      }
+      roleta[lastSwitchedRelay].MoveUP();
+      LastSwitchOnTime = millis();
+      lastSwitchedRelay++;
     }
-  }
-}
+    if (lastSwitchedRelay == TOTAL_WINDOW_NUMB)
+    {
+      manualState = MANUAL_IN_PROGRESS;
+    }
+    break;
 
-void checkAllAutoDown()
-{
-  if (bAllAutoDown)
-  {
-    if (inProgressNow < MAX_RELAY_ON_TIME)
+  case MANUAL_DOWN:
+    // Serial.println(F("MANUAL_DOWN"));
+    // if (inProgressNow <= MAX_RELAY_ON_TIME)
+    // {
+    if (millis() - LastSwitchOnTime > BREAK_TIME_BETWEEN_NEXT_RL)
     {
-      if (lastSwitchedRelay < TOTAL_WINDOW_NUMB)
-      {
-        if (millis() - LastSwitchOnTime > BreakTimeBeetwen)
-        {
-          lastSwitchedRelay++;
-          roleta[lastSwitchedRelay].AutoDown();
-          LastSwitchOnTime = millis();
-        }
-      }
-      else
-      {
-        lastSwitchedRelay = -1;
-        bAllAutoDown = false;
-      }
+      roleta[lastSwitchedRelay].MoveDown();
+      LastSwitchOnTime = millis();
+      lastSwitchedRelay++;
     }
+    if (lastSwitchedRelay == TOTAL_WINDOW_NUMB)
+    {
+      manualState = MANUAL_IN_PROGRESS;
+    }
+    break;
+
+  case MANUAL_OFF:
+    Serial.println(F("MANUAL_OFF"));
+    for (size_t i = 0; i < TOTAL_WINDOW_NUMB; i++)
+    {
+      roleta[i].MoveStop();
+    }
+    manualState = MANUAL_IN_PROGRESS;
+    break;
+
+  case MANUAL_IN_PROGRESS:
+    Serial.println(F("MANUAL_IN_PROGRESS"));
+    if (inProgressNow == 0)
+    {
+      manualState = MANUAL_NOPE;
+    }
+    lastSwitchedRelay = 0;
+    break;
+
+  case MANUAL_NOPE:
+    Serial.println(F("MANUAL_NOPE"));
+    lastSwitchedRelay = 0;
+    break;
+
+  default:
+    break;
   }
 }
 
 void loop()
 {
+  Serial.print(F("inProgressNow: "));
+  Serial.println(inProgressNow);
+  Serial.println();
+  Serial.print(F("lastSwitchedRelay: "));
+  Serial.println(lastSwitchedRelay);
+  Serial.println();
+  // delay(250);
+  if (!client.connected())
+  {
+    unsigned long now = millis();
+    if (now - lastReconnectAttempt > RECONNECT_TIME)
+    {
+      Serial.println(F("not Connected"));
+      lastReconnectAttempt = now;
+      // Attempt to reconnect
+      if (reconnect())
+      {
+        Serial.println(F("Connected"));
+        lastReconnectAttempt = 0;
+        reconnectNumb = 0;
+      }
+      else
+      {
+        reconnectNumb++;
+      }
+      if (reconnectNumb == TOTAL_UNCONNECT)
+      {
+        Serial.println(F("REBOOT"));
+        resetFunc();
+      }
+    }
+  }
+  else
+  {
+    // Client connected
+    Avaible();
+    client.loop();
+  }
 
-  // if (ether.packetLoop(ether.pack))
-  // {
-  // Serial.println("et loop");
-  // memcpy_P(ether.tcpOffset(), page, sizeof page);
-  // ether.httpServerReply(sizeof page - 1);
-  // delay(5000);
-  // }
-  // IF LED10=ON turn it ON
-  // if (strstr((char *)Ethernet::buffer + pos, "GET /?relay1up") != 0)
-  // {
-  //   Serial.println("Received ON command");
-  //   digitalWrite(13, HIGH);
-  // }
-
-  // // IF LED10=OFF turn it OFF
-  // if (strstr((char *)Ethernet::buffer + pos, "GET /?relay1down") != 0)
-  // {
-  //   Serial.println("Received OFF command");
-  //   digitalWrite(13, LOW);
-  // }
-
-  // // show some data to the user
-  // memcpy_P(ether.tcpOffset(), page, sizeof page);
-  // ether.httpServerReply(sizeof page - 1);
-
-  checkAllAutoDown();
-  checkAllAutoUp();
-  checkState();
-  // Serial.println();
   bt_down.update();
   bt_up.update();
   chckBT_event();
-  // checkHandle();
-  // serialEvent();
-  chckRolety();
-  blinkLed();
+  roletyLOOP();
+  checkManualState();
 }
-
-// // Print a message for each type of click.
-// // Note that "click" is also generated for the
-// // first click of a double-click, but "single"
-// // is only generated if it definitely is not
-// // going to be a double click.
