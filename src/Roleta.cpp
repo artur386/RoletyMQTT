@@ -101,62 +101,160 @@ void Roleta::PublishSTATE()
     free(messageOut);
 }
 
-// void Roleta::ChckSTATUS()
+// // void Roleta::ChckSTATUS()
+// // {
+// //     if (this->LAST_STATE != this->STATE)
+// //     {
+// //         this->LAST_STATE = this->STATE;
+// //         this->PublishSTATE();
+// //     }
+// // }
+// /**************************************************/
+// void Roleta::SetCommand(byte cmd)
 // {
-//     if (this->LAST_STATE != this->STATE)
-//     {
-//         this->LAST_STATE = this->STATE;
-//         this->PublishSTATE();
-//     }
+//     bitWrite(STATE_REGISTER, 0, ((cmd >> 0) & 0x01));
+//     bitWrite(STATE_REGISTER, 1, ((cmd >> 1) & 0x01));
+// }
+// byte Roleta::GetCommand()
+// {
+//     return (STATE_REGISTER & 0x00000011);
+// }
+// /**************************************************/
+
+// /**************************************************/
+// void Roleta::SetLastCmd(byte cmd)
+// {
+//     bitWrite(STATE_REGISTER, 2, ((cmd >> 0) & 0x01));
+//     bitWrite(STATE_REGISTER, 3, ((cmd >> 1) & 0x01));
+// }
+// byte Roleta::GetLastCmd()
+// {
+//     return ((STATE_REGISTER & 0x00001100) >> 2);
+// }
+// /**************************************************/
+
+// /**************************************************/
+// void Roleta::SetState(byte std)
+// {
+//     bitWrite(STATE_REGISTER, 4, ((std >> 0) & 0x01));
+//     bitWrite(STATE_REGISTER, 5, ((std >> 1) & 0x01));
+//     bitWrite(STATE_REGISTER, 6, ((std >> 2) & 0x01));
+// }
+// byte Roleta::GetState()
+// {
+//     return ((STATE_REGISTER & 0x01110000) >> 4);
+// }
+// /**************************************************/
+
+// /**************************************************/
+// void Roleta::SetTrigger()
+// {
+//     bitSet(STATE_REGISTER, 7);
+// }
+// bool Roleta::CheckTrigger()
+// {
+//     return ((STATE_REGISTER >> 7) & 0x01);
+// }
+// /**************************************************/
+
+// bool Roleta::CheckState(uint8_t _state)
+// {
+//     return ((this->STATE) >> (_state)) & 0x01;
 // }
 
-void Roleta::SetCommand(byte cmd)
+// void Roleta::SetState(uint8_t _state)
+// {
+//     this->STATE = 0x00;
+//     this->STATE |= (1UL << _state);
+// }
+
+void Roleta::SetRegister(byte &reg, byte data, byte val)
 {
-    STATE_REGISTER = STATE_REGISTER |= cmd;
-}
-byte Roleta::GetCommand()
-{
-    return (STATE_REGISTER &= 0x00000011);
-}
-void Roleta::SetLastCmd(byte cmd)
-{
-    STATE_REGISTER = STATE_REGISTER |= (cmd << 2);
-}
-byte Roleta::GetLastCmd()
-{
-    return ((STATE_REGISTER &= 0x00001100) >> 2);
-}
-void Roleta::SetLastSTD(byte cmd)
-{
-    STATE_REGISTER = STATE_REGISTER |= (cmd << 4);
-}
-byte Roleta::GetLastSTD()
-{
-    return ((STATE_REGISTER &= 0x00001100) >> 4);
-}
-void Roleta::TriggerCmd()
-{
-    STATE_REGISTER = (STATE_REGISTER |= (1 << 7));
+    byte n = RegOrder[data][0], l = RegOrder[data][1];
+
+    for (byte i = 0; i < l; i++)
+    {
+        bitWrite(reg, (n + i), ((val >> i) & 0x01));
+    }
 }
 
-bool Roleta::GetTrigger()
+byte Roleta::GetRegister(byte &reg, byte data)
 {
-    return (STATE_REGISTER &= 0x10000000) >> 7;
+    byte n = RegOrder[data][0], l = RegOrder[data][1];
+    byte mask;
+
+    for (size_t i = 0; i < 8; i++)
+    {
+        if (i >= n && i <= (n + l))
+        {
+            bitSet(mask, i);
+        }
+        else
+        {
+            bitClear(mask, i);
+        }
+    }
+
+    return ((reg & mask) >> n);
 }
 
-bool Roleta::CheckState(uint8_t _state)
+void Roleta::ClearRegister(byte &reg, byte data)
 {
-    return ((this->STATE) >> (_state)) & 0x01;
+    byte n = RegOrder[data][0], l = RegOrder[data][1];
+    byte mask;
+
+    for (size_t i = 0; i < 8; i++)
+    {
+        if (i >= n && i <= (n + l))
+        {
+            bitClear(mask, i);
+        }
+        else
+        {
+            bitSet(mask, i);
+        }
+    }
+    reg &= mask;
 }
 
-void Roleta::SetState(uint8_t _state)
+void GetEEprom()
 {
-    this->STATE = 0x00;
-    this->STATE |= (1UL << _state);
+    EEPROM.get(this->ID + 1, LAST_STATE_REGISTER);
+}
+
+void SetEEprom()
+{
+    EEPROM.put(this->ID + 1, LAST_STATE_REGISTER);
 }
 
 bool Roleta::Loop()
 {
+
+    if (!!this->GetRegister(STATE_REGISTER, TRIG))
+    {
+        byte CMD = this->GetRegister(STATE_REGISTER, CMD);
+        if (!!CMD == true)
+        {
+            if (CMD != this->GetRegister(LAST_STATE_REGISTER, CMD))
+            {
+                this->SetRegister(LAST_STATE_REGISTER, CMD, this->GetRegister(STATE_REGISTER, CMD));
+
+                if (CMD == CMD_OPEN)
+                {
+                    this->MoveUP();
+                }
+                if (CMD == CMD_CLOSE)
+                {
+                    this->MoveDown();
+                }
+                if (CMD == CMD_STOP)
+                {
+                    this->MoveStop();
+                }
+            }
+        }
+    }
+
     bool retOnOff;
     this->ChckSTATUS();
     if (this->CheckState(SHUTTER_CLOSING) || this->CheckState(SHUTTER_OPENING))
