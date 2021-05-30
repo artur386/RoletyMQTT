@@ -95,6 +95,7 @@ public:
     void SetRegister(byte &reg, byte data, byte val);
     byte GetRegister(byte &reg, byte data);
     void ClearRegister(byte &reg, byte data);
+    byte ShistCount(byte mask);
 
     void MoveUP();
     void MoveDown();

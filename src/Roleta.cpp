@@ -105,40 +105,28 @@ void Roleta::PublishSTATE(byte state)
 
 void Roleta::SetRegister(byte &reg, byte mask, byte val)
 {
-    byte j = 0;
-    for (size_t i = 0; i < 8; i++)
-    {
-        if (((mask >> i) & 0x01))
-        {
-            bitWrite(reg, i, ((val >> j) & 0x01));
-            j++;
-        }
-    }
+    ClearRegister(reg, mask);
+    reg |= (val << ShistCount(mask));
 }
 
 byte Roleta::GetRegister(byte &reg, byte mask)
 {
-    byte r = reg & mask;
-    for (size_t i = 0; i < 8; i++)
-    {
-        if ((mask >> i) & 0x01)
-        {
-            r >>= i;
-            break;
-        }
-    }
-    return r;
+    return (reg & mask) >> ShistCount(mask);
 }
 
 void Roleta::ClearRegister(byte &reg, byte mask)
 {
-    for (size_t i = 0; i < 8; i++)
+    reg &= ~(mask);
+}
+
+byte Roleta::ShistCount(byte mask)
+{
+    byte count = 0;
+    while ((~(mask) >> count) & 0x01)
     {
-        if ((mask >> i) & 0x01)
-        {
-            bitClear(reg, i);
-        }
+        count++;
     }
+    return count;
 }
 
 void Roleta::GetEEprom()
