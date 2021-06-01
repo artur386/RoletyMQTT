@@ -177,6 +177,7 @@ void callback(char *topic, byte *payload, unsigned int length)
     else
     {
       roleta[roleta_nb].SetHALT();
+      roleta[roleta_nb].Trigger();
     }
   }
 

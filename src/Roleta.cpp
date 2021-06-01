@@ -37,6 +37,7 @@ void Roleta::RelayHALT(void)
     }
     this->MCP_BANK->digitalWrite(this->DIR_RELAY, HIGH);
     this->MoveIsOn = false;
+    this->SetRegister(STATE_REGISTER, STD, STD_STOPPED);
 }
 
 void Roleta::MoveUP()
@@ -56,11 +57,17 @@ void Roleta::MoveDown()
 
 void Roleta::SetUP()
 {
-    this->SetRegister(STATE_REGISTER, CMD, CMD_OPEN);
+    if (this->GetRegister(LAST_STATE_REGISTER, STD) != STD_OPEN && this->GetRegister(LAST_STATE_REGISTER, STD) != STD_OPENING)
+    {
+        this->SetRegister(STATE_REGISTER, CMD, CMD_OPEN);
+    }
 }
 void Roleta::SetDOWN()
 {
-    this->SetRegister(STATE_REGISTER, CMD, CMD_CLOSE);
+    if (this->GetRegister(LAST_STATE_REGISTER, STD) != STD_CLOSED && this->GetRegister(LAST_STATE_REGISTER, STD) != STD_CLOSING)
+    {
+        this->SetRegister(STATE_REGISTER, CMD, CMD_CLOSE);
+    }
 }
 void Roleta::SetHALT()
 {
@@ -149,47 +156,52 @@ bool Roleta::CheckTrigger(void)
 void Roleta::Loop()
 {
 
-    if (this->GetRegister(STATE_REGISTER, CMD) != this->GetRegister(LAST_STATE_REGISTER, CMD))
+    if (this->GetRegister(STATE_REGISTER, CMD) != this->GetRegister(LAST_STATE_REGISTER, CMD) && !cmdChange)
     {
         cmdChange = true;
     }
 
-    if (this->CheckTrigger())
+    if (cmdChange)
     {
-        byte CMDb = this->GetRegister(STATE_REGISTER, CMD);
-        this->ClearRegister(STATE_REGISTER, TRIG);
-        cmdChange = false;
-
-        if (CMDb != this->GetRegister(LAST_STATE_REGISTER, CMD))
+        if (this->CheckTrigger())
         {
+            this->ClearRegister(STATE_REGISTER, TRIG);
+
+            cmdChange = false;
+            byte CMDb = this->GetRegister(STATE_REGISTER, CMD);
             this->SetRegister(LAST_STATE_REGISTER, CMD, CMDb);
 
             if (CMDb == CMD_OPEN)
             {
-                if (!this->MoveIsOn)
+
+                if (this->GetRegister(LAST_STATE_REGISTER, STD) == STD_CLOSING)
                 {
-                    this->SetRegister(STATE_REGISTER, STD, STD_OPENING);
-                    this->MoveUP();
+                    this->RelayHALT();
+                    delay(150);
                 }
+                this->MoveUP();
+                this->SetRegister(STATE_REGISTER, STD, STD_OPENING);
             }
             else if (CMDb == CMD_CLOSE)
             {
-                if (!this->MoveIsOn)
+                if (this->GetRegister(LAST_STATE_REGISTER, STD) == STD_CLOSING)
                 {
-                    this->SetRegister(STATE_REGISTER, STD, STD_CLOSING);
-                    this->MoveDown();
+                    this->RelayHALT();
+                    delay(150);
                 }
+                this->MoveDown();
+                this->SetRegister(STATE_REGISTER, STD, STD_CLOSING);
             }
             else if (CMDb == CMD_STOP)
             {
                 if (this->MoveIsOn)
                 {
-                    this->SetRegister(STATE_REGISTER, STD, STD_STOPPED);
                     this->RelayHALT();
                 }
             }
         }
     }
+
     if (this->MoveIsOn)
     {
         if (millis() - this->START_TIME > *this->END_TIME)
