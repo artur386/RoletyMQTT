@@ -2,17 +2,21 @@
 
 Roleta::Roleta(uint8_t ID, PubSubClient *mqttClient, Adafruit_MCP23017 *MCP_BANK, uint8_t EN_RELAY, uint8_t DIR_RELAY, uint16_t TIME_UP, uint16_t TIME_DOWN)
 {
-    this->mqttClient = mqttClient;
-    this->DIR_RELAY = DIR_RELAY;
-    this->EN_RELAY = EN_RELAY;
     this->ID = ID;
+    this->mqttClient = mqttClient;
     this->MCP_BANK = MCP_BANK;
+    this->EN_RELAY = EN_RELAY;
+    this->DIR_RELAY = DIR_RELAY;
     this->TIME_TO_UP = TIME_UP;
     this->TIME_TO_DOWN = TIME_DOWN;
     this->END_TIME = 0;
     this->MoveIsOn = false;
     this->cmdChange = false;
-    this->GetEEprom();
+    LAST_STATE_REGISTER = 0x00;
+    byte tempReg = GetEEprom(this->ID);
+    this->SetRegister(LAST_STATE_REGISTER, STD, GetRegister(tempReg, STD));
+    this->SetRegister(LAST_STATE_REGISTER, CMD, GetRegister(tempReg, CMD));
+    STATE_REGISTER = LAST_STATE_REGISTER;
 }
 
 void Roleta::RelayUP(void)
@@ -113,12 +117,12 @@ void Roleta::PublishSTATE(byte state)
 void Roleta::SetRegister(byte &reg, byte mask, byte val)
 {
     ClearRegister(reg, mask);
-    reg |= (val << ShistCount(mask));
+    reg |= (val << ShiftCount(mask));
 }
 
 byte Roleta::GetRegister(byte &reg, byte mask)
 {
-    return (reg & mask) >> ShistCount(mask);
+    return (reg & mask) >> ShiftCount(mask);
 }
 
 void Roleta::ClearRegister(byte &reg, byte mask)
@@ -126,7 +130,7 @@ void Roleta::ClearRegister(byte &reg, byte mask)
     reg &= ~(mask);
 }
 
-byte Roleta::ShistCount(byte mask)
+byte Roleta::ShiftCount(byte mask)
 {
     byte count = 0;
     while ((~(mask) >> count) & 0x01)
@@ -136,14 +140,14 @@ byte Roleta::ShistCount(byte mask)
     return count;
 }
 
-void Roleta::GetEEprom()
+byte Roleta::GetEEprom(byte adress)
 {
-    EEPROM.get(this->ID + 1, LAST_STATE_REGISTER);
+    return EEPROM.read(adress);
 }
 
-void Roleta::SetEEprom()
+void Roleta::UpdateEEprom(byte adress, byte data)
 {
-    EEPROM.put(this->ID + 1, LAST_STATE_REGISTER);
+    EEPROM.update(adress, data);
 }
 void Roleta::Trigger(void)
 {
@@ -222,6 +226,6 @@ void Roleta::Loop()
     {
         this->SetRegister(LAST_STATE_REGISTER, STD, this->GetRegister(STATE_REGISTER, STD));
         this->PublishSTATE(this->GetRegister(LAST_STATE_REGISTER, STD));
-        this->SetEEprom();
+        this->UpdateEEprom();
     }
 }
