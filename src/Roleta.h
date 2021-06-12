@@ -28,35 +28,18 @@
 #define DEBUG_PRINTLN(...)
 #endif //
 
-enum STATE
-{
-    SHUTTER_CLOSED,
-    SHUTTER_CLOSING,
-    SHUTTER_OPEN,
-    SHUTTER_OPENING,
-    SHUTTER_STOPPED
-};
+#define DIR_DOWN 0
+#define DIR_UP 1
 
-enum DIR
-{
-    DIR_DOWN,
-    DIR_UP
-};
+#define CMD_OPEN 0
+#define CMD_CLOSE 1
+#define CMD_STOP 2
 
-enum CMD_REG
-{
-    CMD_OPEN,
-    CMD_CLOSE,
-    CMD_STOP
-};
-enum STD_REG
-{
-    STD_CLOSED,
-    STD_CLOSING,
-    STD_OPEN,
-    STD_OPENING,
-    STD_STOPPED
-};
+#define STD_CLOSED 0
+#define STD_CLOSING 1
+#define STD_OPEN 2
+#define STD_OPENING 3
+#define STD_STOPPED 4
 
 #define CMD 0x03
 #define STD 0x1C
@@ -74,6 +57,7 @@ private:
     uint8_t EN_RELAY;
 
     byte STATE_REGISTER, LAST_STATE_REGISTER;
+    byte COMMAND_REGISTER, LAST_COMMAND_REGISTER;
 
     uint16_t TIME_TO_UP;
     uint16_t TIME_TO_DOWN;
@@ -93,7 +77,7 @@ public:
     byte GetEEprom(byte adress);
 
     void SetRegister(byte &reg, byte data, byte val);
-    byte GetRegister(byte &reg, byte data);
+    byte GetRegister(byte reg, byte data);
     void ClearRegister(byte &reg, byte data);
     byte ShiftCount(byte mask);
 
@@ -102,7 +86,7 @@ public:
 
     Roleta(uint8_t ID, PubSubClient *mqttClient, Adafruit_MCP23017 *MCP_BANK, uint8_t EN_RELAY, uint8_t DIR_RELAY, uint16_t TIME_UP, uint16_t TIME_DOWN);
     // bool CheckState(uint8_t state);
-    void PublishSTATE(byte state);
+    boolean PublishSTATE(byte state);
     void Loop();
 
     void Trigger(void);

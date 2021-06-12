@@ -28,7 +28,6 @@ WC 10
 #define CLIENT_USER "HAmQTT"
 #define CLIENT_PASS "barbapapa1"
 #define PORT_MQTT 1883
-#define PUBLISH_DELAY 2000
 
 byte mac[] = {0xDE, 0xED, 0xBA, 0xFE, 0xFE, 0xED};
 IPAddress nanoIP(192, 168, 1, 21);
@@ -37,8 +36,11 @@ IPAddress mqttServer(192, 168, 1, 19);
 #define BREAK_TIME_BETWEEN_NEXT_SHUTTER 600
 #define MAX_RELAY_ON_TIME 10
 #define TOTAL_WINDOW_NUMB 10
-#define RECONNECT_TIME 2000
-#define RECONNECT_TRY_NUMB 10
+#define RECONNECT_TIME 1000
+#define PUBLISH_DELAY 10000
+#define RECONNECT_TRY_NUMB 60
+#define MQTTKEEPALIVE 15
+#define MQTTSOCKETTIMEOUT 15
 
 uint8_t StartupShutter;
 uint8_t reconnectNumb = 0;
@@ -97,11 +99,17 @@ boolean reconnect()
       char *command_topic = (char *)malloc(sizeof(char) * 14);
       snprintf_P(command_topic, 14, PSTR("roleta/%i/cmd"), i);
       client.subscribe(command_topic, 1);
+      wdt_reset();
+      client.loop();
+      wdt_reset();
       free(command_topic);
     }
     char *command_topic = (char *)malloc(sizeof(char) * 20);
     snprintf_P(command_topic, 20, PSTR("roleta/all/cmd"));
     client.subscribe(command_topic, 1);
+    wdt_reset();
+    client.loop();
+    wdt_reset();
     free(command_topic);
   }
   return client.connected();
@@ -123,6 +131,7 @@ String getValue(String data, char separator, int index)
     }
   }
 
+  wdt_reset();
   return found > index ? data.substring(strIndex[0], strIndex[1]) : "";
 }
 
@@ -148,6 +157,8 @@ void callback(char *topic, byte *payload, unsigned int length)
 
   if (strcmp_P(ch_payload, PSTR("OPEN")) == 0)
   {
+    wdt_reset();
+
     if (all)
     {
       SetAllShutter(CMD_OPEN);
@@ -159,6 +170,7 @@ void callback(char *topic, byte *payload, unsigned int length)
   }
   else if (strcmp_P(ch_payload, PSTR("CLOSE")) == 0)
   {
+    wdt_reset();
     if (all)
     {
       SetAllShutter(CMD_CLOSE);
@@ -170,6 +182,7 @@ void callback(char *topic, byte *payload, unsigned int length)
   }
   else if (strcmp_P(ch_payload, PSTR("STOP")) == 0)
   {
+    wdt_reset();
     if (all)
     {
       SetAllShutter(CMD_STOP);
@@ -188,6 +201,7 @@ void SetAllShutter(byte CMDd)
 {
   for (size_t i = 0; i < TOTAL_WINDOW_NUMB; i++)
   {
+    wdt_reset();
     switch (CMDd)
     {
     case CMD_OPEN:
@@ -213,7 +227,7 @@ void Avaible()
 {
   if (client.connected())
   {
-    if (millis() - LastOnlinePublish > 60000 || LastOnlinePublish == 0)
+    if (millis() - LastOnlinePublish > PUBLISH_DELAY || LastOnlinePublish == 0)
     {
       LastOnlinePublish = millis();
 
@@ -222,11 +236,17 @@ void Avaible()
         char *availability_topic = (char *)malloc(sizeof(char) * 23);
         snprintf_P(availability_topic, 23, PSTR("roleta/%i/availability"), i);
         client.publish(availability_topic, "online");
+        wdt_reset();
+        client.loop();
+        wdt_reset();
         free(availability_topic);
       }
       char *availability_topic = (char *)malloc(sizeof(char) * 25);
       snprintf_P(availability_topic, 25, PSTR("roleta/all/availability"));
       client.publish(availability_topic, "online");
+      wdt_reset();
+      client.loop();
+      wdt_reset();
       free(availability_topic);
     }
   }
@@ -247,12 +267,20 @@ void setup()
     mcp1.digitalWrite(j, HIGH); // ustaw pin na stan wysoki
     mcp2.pinMode(j, OUTPUT);    // ustaw pin jako wyjście
     mcp2.digitalWrite(j, HIGH); // ustaw pin na stan wysoki
+    wdt_reset();
   }
   client.setServer(mqttServer, PORT_MQTT);
+  wdt_reset();
+
   client.setCallback(callback);
+  wdt_reset();
+  client.setKeepAlive(MQTTKEEPALIVE);
+  client.setSocketTimeout(MQTTSOCKETTIMEOUT);
 
   Ethernet.init(10);
+  wdt_reset();
   Ethernet.begin(mac, nanoIP);
+  wdt_reset();
 
   lastReconnectAttempt = 0;
   LastOnlinePublish = 0;
@@ -278,6 +306,7 @@ byte ShutterInProgress(void)
     {
       inProgress++;
     }
+    wdt_reset();
   }
   return inProgress;
 }
@@ -286,7 +315,9 @@ void roletyLOOP()
 {
   for (size_t i = 0; i < TOTAL_WINDOW_NUMB; i++)
   {
+    wdt_reset();
     roleta[i].Loop();
+    wdt_reset();
     if (roleta[i].cmdChange)
     {
       if (ShutterInProgress() < MAX_RELAY_ON_TIME)
@@ -295,11 +326,8 @@ void roletyLOOP()
         {
           roleta[i].Trigger();
           roleta[i].Loop();
+          wdt_reset();
           LastSwitchOnTime = millis();
-        }
-        else
-        {
-          break;
         }
       }
     }
@@ -310,7 +338,9 @@ void roletyLOOP()
 void chckBT_event()
 {
   bt_down.update();
+  wdt_reset();
   bt_up.update();
+  wdt_reset();
   if (!!ShutterInProgress())
   {
     if (bt_up.isSingleClick() || bt_down.isSingleClick())
@@ -364,6 +394,7 @@ void loop()
     // Client connected
     wdt_reset();
     Avaible();
+    wdt_reset();
     client.loop();
   }
 
