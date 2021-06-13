@@ -14,11 +14,11 @@ Roleta::Roleta(uint8_t ID, PubSubClient *mqttClient, Adafruit_MCP23017 *MCP_BANK
     this->cmdChange = false;
     this->LAST_STATE_REGISTER = 0x00;
     this->STATE_REGISTER = 0x00;
-    byte tempReg = GetEEprom(this->ID);
-    this->SetRegister(this->LAST_STATE_REGISTER, STD, GetRegister(tempReg, STD));
-    this->SetRegister(this->LAST_STATE_REGISTER, CMD, GetRegister(tempReg, CMD));
+    this->triger = false;
+    LAST_STATE_REGISTER = this->GetEEprom(STATUS);
+    LAST_COMMAND_REGISTER = this->GetEEprom(COMMAND);
     STATE_REGISTER = LAST_STATE_REGISTER;
-    this->UpdateEEprom(this->ID, this->LAST_STATE_REGISTER);
+    COMMAND_REGISTER = LAST_COMMAND_REGISTER;
 }
 
 void Roleta::RelayUP(void)
@@ -30,14 +30,14 @@ void Roleta::RelayUP(void)
 void Roleta::RelayDOWN(void)
 {
     this->MCP_BANK->digitalWrite(this->DIR_RELAY, LOW);
-    delay(100);
+    delay(50);
     this->MCP_BANK->digitalWrite(this->EN_RELAY, LOW);
     this->MoveIsOn = true;
 }
 void Roleta::RelayHALT(void)
 {
     this->MCP_BANK->digitalWrite(this->EN_RELAY, HIGH);
-    if (this->GetRegister(LAST_STATE_REGISTER, STD) == STD_CLOSING)
+    if (LAST_STATE_REGISTER == STD_CLOSING)
     {
         delay(100);
     }
@@ -51,6 +51,7 @@ void Roleta::MoveUP()
     this->END_TIME = &this->TIME_TO_UP;
     this->START_TIME = millis();
 }
+
 void Roleta::MoveDown()
 {
     this->RelayDOWN();
@@ -60,26 +61,25 @@ void Roleta::MoveDown()
 
 void Roleta::SetUP()
 {
-    if (this->GetRegister(this->LAST_STATE_REGISTER, CMD) != CMD_OPEN)
+    if (LAST_COMMAND_REGISTER != CMD_OPEN)
     {
-        this->SetRegister(this->STATE_REGISTER, CMD, CMD_OPEN);
+        COMMAND_REGISTER = CMD_OPEN;
         cmdChange = true;
     }
 }
 void Roleta::SetDOWN()
 {
-    if (this->GetRegister(this->LAST_STATE_REGISTER, CMD) != CMD_CLOSE)
+    if (LAST_COMMAND_REGISTER != CMD_CLOSE)
     {
-        this->SetRegister(this->STATE_REGISTER, CMD, CMD_CLOSE);
+        COMMAND_REGISTER = CMD_CLOSE;
         cmdChange = true;
     }
 }
 void Roleta::SetHALT()
 {
-    if (this->GetRegister(this->LAST_STATE_REGISTER, CMD) != CMD_STOP)
+    if (LAST_COMMAND_REGISTER != CMD_STOP)
     {
-        this->SetRegister(this->STATE_REGISTER, CMD, CMD_STOP);
-        // this->Trigger();
+        COMMAND_REGISTER = CMD_STOP;
         cmdChange = true;
     }
 }
@@ -90,28 +90,33 @@ boolean Roleta::PublishSTATE(byte state)
     char *messageOut = (char *)malloc(sizeof(char) * 60);
     bool pubOK;
 
-    if (state == STD_CLOSED)
+    switch (state)
     {
+    case STD_CLOSED:
         snprintf_P(messageP, 7, PSTR("closed"));
-    }
-    else if (state == STD_CLOSING)
-    {
-        snprintf_P(messageP, 8, PSTR("closing"));
-    }
-    else if (state == STD_OPEN)
-    {
-        snprintf_P(messageP, 5, PSTR("open"));
-    }
-    else if (state == STD_OPENING)
-    {
-        snprintf_P(messageP, 8, PSTR("opening"));
-    }
-    else if (state == STD_STOPPED)
-    {
-        snprintf_P(messageP, 8, PSTR("stopped"));
-    }
+        break;
 
-    snprintf_P(topicP, 16, PSTR("roleta/%i/state"), this->ID);
+    case STD_CLOSING:
+        snprintf_P(messageP, 8, PSTR("closing"));
+        break;
+
+    case STD_OPEN:
+        snprintf_P(messageP, 5, PSTR("open"));
+        break;
+
+    case STD_OPENING:
+        snprintf_P(messageP, 8, PSTR("opening"));
+        break;
+
+    case STD_STOPPED:
+        snprintf_P(messageP, 8, PSTR("stopped"));
+        break;
+
+    default:
+        break;
+    }
+    LAST_STATE_REGISTER = STATE_REGISTER;
+    snprintf_P(topicP, 20, PSTR("roleta/%i/state"), this->ID);
     if (this->mqttClient->connected())
     {
         pubOK = this->mqttClient->publish(topicP, messageP);
@@ -123,90 +128,81 @@ boolean Roleta::PublishSTATE(byte state)
     return pubOK;
 }
 
-void Roleta::SetRegister(byte &reg, byte mask, byte val)
+byte Roleta::GetEEprom(byte regName)
 {
-    ClearRegister(reg, mask);
-    reg |= (val << ShiftCount(mask));
-}
-
-byte Roleta::GetRegister(byte reg, byte mask)
-{
-    return (reg & mask) >> ShiftCount(mask);
-}
-
-void Roleta::ClearRegister(byte &reg, byte mask)
-{
-    reg &= ~(mask);
-}
-
-byte Roleta::ShiftCount(byte mask)
-{
-    byte count = 0;
-    while ((~(mask) >> count) & 0x01)
+    switch (regName)
     {
-        count++;
+    case STATUS:
+        return EEPROM.read((this->ID * 2) + 0);
+        break;
+
+    case COMMAND:
+        return EEPROM.read((this->ID * 2) + 1);
+        break;
+
+    default:
+        break;
     }
-    return count;
+
+    return 0;
 }
 
-byte Roleta::GetEEprom(byte adress)
+void Roleta::UpdateEEprom(byte state, byte command)
 {
-    return EEPROM.read(adress);
+    EEPROM.update((this->ID * 2) + 0, state);
+    EEPROM.update((this->ID * 2) + 1, command);
 }
 
-void Roleta::UpdateEEprom(byte adress, byte data)
-{
-    EEPROM.update(adress, data);
-}
 void Roleta::Trigger(void)
 {
-    this->SetRegister(STATE_REGISTER, TRIG, 1);
+    this->triger = true;
 }
+
 boolean Roleta::CheckTrigger(void)
 {
-    return !!this->GetRegister(STATE_REGISTER, TRIG);
+    return this->triger;
 }
+
 void Roleta::Loop()
 {
-    if (cmdChange)
+    if (this->cmdChange)
     {
-        if (this->CheckTrigger())
+        if (this->triger)
         {
-            this->ClearRegister(STATE_REGISTER, TRIG);
+            this->triger = false;
             cmdChange = false;
 
-            switch (this->GetRegister(STATE_REGISTER, CMD))
+            switch (COMMAND_REGISTER)
             {
             case CMD_OPEN:
-                if (this->GetRegister(LAST_STATE_REGISTER, STD) == STD_CLOSING)
-                {
+                STATE_REGISTER = STD_OPENING;
+                if (LAST_STATE_REGISTER == STD_CLOSING)
                     this->RelayHALT();
-                    delay(100);
-                }
-                this->SetRegister(STATE_REGISTER, STD, STD_OPENING);
+                this->UpdateEEprom(STATE_REGISTER, COMMAND_REGISTER);
+                this->PublishSTATE(STATE_REGISTER);
                 this->MoveUP();
                 break;
 
             case CMD_CLOSE:
-                if (this->GetRegister(LAST_STATE_REGISTER, STD) == STD_OPENING)
-                {
+                STATE_REGISTER = STD_CLOSING;
+                if (LAST_STATE_REGISTER == STD_OPENING)
                     this->RelayHALT();
-                    delay(100);
-                }
-                this->SetRegister(STATE_REGISTER, STD, STD_CLOSING);
+                this->UpdateEEprom(STATE_REGISTER, COMMAND_REGISTER);
+                this->PublishSTATE(STATE_REGISTER);
                 this->MoveDown();
                 break;
 
             case CMD_STOP:
-                this->SetRegister(STATE_REGISTER, STD, STD_STOPPED);
+                STATE_REGISTER = STD_STOPPED;
+                this->UpdateEEprom(STATE_REGISTER, COMMAND_REGISTER);
+                this->PublishSTATE(STATE_REGISTER);
                 this->RelayHALT();
                 break;
 
             default:
                 break;
             }
-
-            this->SetRegister(LAST_STATE_REGISTER, CMD, this->GetRegister(STATE_REGISTER, CMD));
+            LAST_COMMAND_REGISTER = COMMAND_REGISTER;
         }
     }
 
@@ -214,25 +210,13 @@ void Roleta::Loop()
     {
         if (millis() - this->START_TIME > *this->END_TIME)
         {
-            if (this->GetRegister(LAST_STATE_REGISTER, STD) == STD_OPENING)
-            {
-                this->SetRegister(STATE_REGISTER, STD, STD_OPEN);
-            }
-            else if (this->GetRegister(LAST_STATE_REGISTER, STD) == STD_CLOSING)
-            {
-                this->SetRegister(STATE_REGISTER, STD, STD_CLOSED);
-            }
-
+            if (LAST_STATE_REGISTER == STD_OPENING)
+                STATE_REGISTER = STD_OPEN;
+            if (LAST_STATE_REGISTER == STD_CLOSING)
+                STATE_REGISTER = STD_CLOSED;
+            this->UpdateEEprom(STATE_REGISTER, COMMAND_REGISTER);
+            this->PublishSTATE(STATE_REGISTER);
             this->RelayHALT();
-        }
-    }
-    if (this->GetRegister(STATE_REGISTER, STD) != this->GetRegister(LAST_STATE_REGISTER, STD))
-    {
-        if (this->PublishSTATE(this->GetRegister(LAST_STATE_REGISTER, STD)))
-        {
-            this->SetRegister(LAST_STATE_REGISTER, STD, this->GetRegister(STATE_REGISTER, STD));
-            this->UpdateEEprom(this->ID, LAST_STATE_REGISTER);
-            delay(5);
         }
     }
 }

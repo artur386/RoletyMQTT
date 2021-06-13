@@ -41,6 +41,9 @@
 #define STD_OPENING 3
 #define STD_STOPPED 4
 
+#define STATUS 0
+#define COMMAND 1
+
 #define CMD 0x03
 #define STD 0x1C
 #define TRIG 0x20
@@ -58,6 +61,7 @@ private:
 
     byte STATE_REGISTER, LAST_STATE_REGISTER;
     byte COMMAND_REGISTER, LAST_COMMAND_REGISTER;
+    boolean triger;
 
     uint16_t TIME_TO_UP;
     uint16_t TIME_TO_DOWN;

@@ -36,13 +36,12 @@ IPAddress mqttServer(192, 168, 1, 19);
 #define BREAK_TIME_BETWEEN_NEXT_SHUTTER 600
 #define MAX_RELAY_ON_TIME 10
 #define TOTAL_WINDOW_NUMB 10
-#define RECONNECT_TIME 1000
-#define PUBLISH_DELAY 10000
-#define RECONNECT_TRY_NUMB 60
-#define MQTTKEEPALIVE 15
-#define MQTTSOCKETTIMEOUT 15
-
-uint8_t StartupShutter;
+#define RECONNECT_TIME 2500
+#define PUBLISH_DELAY 60000
+#define RECONNECT_TRY_NUMB 12
+#define MQTTKEEPALIVE 10
+#define MQTTSOCKETTIMEOUT 25
+#define BUFFERSIZE 256
 uint8_t reconnectNumb = 0;
 
 bool lastPower = false;
@@ -70,6 +69,7 @@ unsigned long lastReconnectAttempt = 0;
 
 #define BTN_UP 2
 #define BTN_DOWN 3
+#define RST_LAN 4
 
 PinButton bt_up(BTN_UP);
 PinButton bt_down(BTN_DOWN);
@@ -90,28 +90,60 @@ Roleta roleta[TOTAL_WINDOW_NUMB] = {
     Roleta(9, &client, &mcp2, 4, 11, 25000, 22000)}; //    ZACHOD"
                                                      // Roleta(10, &client, &mcp2, 0, 15, 22000, 16000)}; //    WC "
 
+void setup()
+{
+  pinMode(RST_LAN, OUTPUT);
+  digitalWrite(RST_LAN, HIGH);
+
+  wdt_enable(WDTO_8S);
+  // Serial.begin(9600);
+
+  //ustawienie mcp
+  mcp1.begin();  // MCP - brak adres 0x20
+  mcp2.begin(1); // MCP - brak adres 0x21
+
+  for (byte j = 0; j <= 15; j++)
+  {
+    mcp1.pinMode(j, OUTPUT);    // ustaw pin jako wyjście
+    mcp1.digitalWrite(j, HIGH); // ustaw pin na stan wysoki
+    mcp2.pinMode(j, OUTPUT);    // ustaw pin jako wyjście
+    mcp2.digitalWrite(j, HIGH); // ustaw pin na stan wysoki
+    wdt_reset();
+  }
+  client.setServer(mqttServer, PORT_MQTT);
+  client.setCallback(callback);
+  client.setKeepAlive(MQTTKEEPALIVE);
+  client.setSocketTimeout(MQTTSOCKETTIMEOUT);
+  client.setBufferSize(BUFFERSIZE);
+  wdt_reset();
+
+  Ethernet.init(10);
+  Ethernet.begin(mac, nanoIP);
+  wdt_reset();
+
+  lastReconnectAttempt = 0;
+  LastOnlinePublish = 0;
+}
+
 boolean reconnect()
 {
+  wdt_enable(WDTO_8S);
   if (client.connect(CLIENT_ID, CLIENT_USER, CLIENT_PASS))
   {
     for (size_t i = 0; i < TOTAL_WINDOW_NUMB; i++)
     {
+      wdt_reset();
       char *command_topic = (char *)malloc(sizeof(char) * 14);
       snprintf_P(command_topic, 14, PSTR("roleta/%i/cmd"), i);
       client.subscribe(command_topic, 1);
-      wdt_reset();
-      client.loop();
-      wdt_reset();
       free(command_topic);
     }
     char *command_topic = (char *)malloc(sizeof(char) * 20);
     snprintf_P(command_topic, 20, PSTR("roleta/all/cmd"));
     client.subscribe(command_topic, 1);
-    wdt_reset();
-    client.loop();
-    wdt_reset();
     free(command_topic);
   }
+  wdt_reset();
   return client.connected();
 }
 
@@ -131,13 +163,13 @@ String getValue(String data, char separator, int index)
     }
   }
 
-  wdt_reset();
   return found > index ? data.substring(strIndex[0], strIndex[1]) : "";
 }
 
 void callback(char *topic, byte *payload, unsigned int length)
 {
-  wdt_reset();
+
+  wdt_enable(WDTO_8S);
   bool all;
   uint8_t roleta_nb;
   String topicMsg = getValue(topic, '/', 1);
@@ -155,10 +187,11 @@ void callback(char *topic, byte *payload, unsigned int length)
 
   memcpy(ch_payload, payload, length);
 
+  wdt_reset();
   if (strcmp_P(ch_payload, PSTR("OPEN")) == 0)
   {
-    wdt_reset();
 
+    wdt_reset();
     if (all)
     {
       SetAllShutter(CMD_OPEN);
@@ -170,6 +203,7 @@ void callback(char *topic, byte *payload, unsigned int length)
   }
   else if (strcmp_P(ch_payload, PSTR("CLOSE")) == 0)
   {
+
     wdt_reset();
     if (all)
     {
@@ -182,6 +216,7 @@ void callback(char *topic, byte *payload, unsigned int length)
   }
   else if (strcmp_P(ch_payload, PSTR("STOP")) == 0)
   {
+
     wdt_reset();
     if (all)
     {
@@ -190,11 +225,12 @@ void callback(char *topic, byte *payload, unsigned int length)
     else
     {
       roleta[roleta_nb].SetHALT();
-      roleta[roleta_nb].Trigger();
     }
   }
 
+  wdt_reset();
   free(ch_payload);
+  wdt_disable();
 }
 
 void SetAllShutter(byte CMDd)
@@ -214,7 +250,6 @@ void SetAllShutter(byte CMDd)
 
     case CMD_STOP:
       roleta[i].SetHALT();
-      roleta[i].Trigger();
       break;
 
     default:
@@ -225,66 +260,22 @@ void SetAllShutter(byte CMDd)
 
 void Avaible()
 {
-  if (client.connected())
+  if (millis() - LastOnlinePublish > PUBLISH_DELAY || LastOnlinePublish == 0)
   {
-    if (millis() - LastOnlinePublish > PUBLISH_DELAY || LastOnlinePublish == 0)
-    {
-      LastOnlinePublish = millis();
+    LastOnlinePublish = millis();
 
-      for (size_t i = 0; i < TOTAL_WINDOW_NUMB; i++)
-      {
-        char *availability_topic = (char *)malloc(sizeof(char) * 23);
-        snprintf_P(availability_topic, 23, PSTR("roleta/%i/availability"), i);
-        client.publish(availability_topic, "online");
-        wdt_reset();
-        client.loop();
-        wdt_reset();
-        free(availability_topic);
-      }
+    for (size_t i = 0; i < TOTAL_WINDOW_NUMB; i++)
+    {
       char *availability_topic = (char *)malloc(sizeof(char) * 25);
-      snprintf_P(availability_topic, 25, PSTR("roleta/all/availability"));
+      snprintf_P(availability_topic, 25, PSTR("roleta/%i/availability"), i);
       client.publish(availability_topic, "online");
-      wdt_reset();
-      client.loop();
-      wdt_reset();
       free(availability_topic);
     }
+    char *availability_topic = (char *)malloc(sizeof(char) * 25);
+    snprintf_P(availability_topic, 25, PSTR("roleta/all/availability"));
+    client.publish(availability_topic, "online");
+    free(availability_topic);
   }
-}
-
-void setup()
-{
-  wdt_enable(WDTO_8S);
-  Serial.begin(9600);
-
-  //ustawienie mcp
-  mcp1.begin();  // MCP - brak adres 0x20
-  mcp2.begin(1); // MCP - brak adres 0x21
-
-  for (byte j = 0; j <= 15; j++)
-  {
-    mcp1.pinMode(j, OUTPUT);    // ustaw pin jako wyjście
-    mcp1.digitalWrite(j, HIGH); // ustaw pin na stan wysoki
-    mcp2.pinMode(j, OUTPUT);    // ustaw pin jako wyjście
-    mcp2.digitalWrite(j, HIGH); // ustaw pin na stan wysoki
-    wdt_reset();
-  }
-  client.setServer(mqttServer, PORT_MQTT);
-  wdt_reset();
-
-  client.setCallback(callback);
-  wdt_reset();
-  client.setKeepAlive(MQTTKEEPALIVE);
-  client.setSocketTimeout(MQTTSOCKETTIMEOUT);
-
-  Ethernet.init(10);
-  wdt_reset();
-  Ethernet.begin(mac, nanoIP);
-  wdt_reset();
-
-  lastReconnectAttempt = 0;
-  LastOnlinePublish = 0;
-  wdt_reset();
 }
 
 void switchPower(void)
@@ -292,6 +283,10 @@ void switchPower(void)
   bool onOff = !!ShutterInProgress();
   if (lastPower != onOff)
   {
+    if (lastPower)
+    {
+      delay(100);
+    }
     lastPower = onOff;
     mcp2.digitalWrite(14, !lastPower);
   }
@@ -302,11 +297,11 @@ byte ShutterInProgress(void)
   byte inProgress = 0;
   for (int i = 0; i < TOTAL_WINDOW_NUMB; i++)
   {
+    wdt_reset();
     if (roleta[i].MoveIsOn)
     {
       inProgress++;
     }
-    wdt_reset();
   }
   return inProgress;
 }
@@ -316,21 +311,23 @@ void roletyLOOP()
   for (size_t i = 0; i < TOTAL_WINDOW_NUMB; i++)
   {
     wdt_reset();
-    roleta[i].Loop();
-    wdt_reset();
     if (roleta[i].cmdChange)
     {
       if (ShutterInProgress() < MAX_RELAY_ON_TIME)
       {
-        if (millis() - LastSwitchOnTime >= BREAK_TIME_BETWEEN_NEXT_SHUTTER)
+        if (millis() - LastSwitchOnTime > BREAK_TIME_BETWEEN_NEXT_SHUTTER)
         {
           roleta[i].Trigger();
-          roleta[i].Loop();
-          wdt_reset();
           LastSwitchOnTime = millis();
+          break;
         }
       }
     }
+  }
+  for (size_t i = 0; i < TOTAL_WINDOW_NUMB; i++)
+  {
+    wdt_reset();
+    roleta[i].Loop();
     switchPower();
   }
 }
@@ -338,9 +335,9 @@ void roletyLOOP()
 void chckBT_event()
 {
   bt_down.update();
-  wdt_reset();
   bt_up.update();
   wdt_reset();
+
   if (!!ShutterInProgress())
   {
     if (bt_up.isSingleClick() || bt_down.isSingleClick())
@@ -366,6 +363,7 @@ void loop()
 
   if (!client.connected())
   {
+    wdt_disable();
     unsigned long now = millis();
     if (now - lastReconnectAttempt > RECONNECT_TIME)
     {
@@ -375,30 +373,40 @@ void loop()
       if (reconnect())
       {
         // Serial.println(F("Connected"));
-        wdt_reset();
+        LastOnlinePublish = 0;
         reconnectNumb = 0;
       }
       else
       {
-        wdt_reset();
-        reconnectNumb++;
-      }
-      if (reconnectNumb == RECONNECT_TRY_NUMB)
-      {
-        delay(10000);
+        if (++reconnectNumb == RECONNECT_TRY_NUMB)
+        {
+          if (1 == 0)
+          {
+            wdt_disable();
+            digitalWrite(RST_LAN, LOW);
+            delay(10);
+            digitalWrite(RST_LAN, HIGH);
+            delay(4000);
+            wdt_enable(WDTO_8S);
+          }
+          else
+          {
+            wdt_enable(WDTO_15MS);
+            delay(500);
+          }
+        }
       }
     }
   }
   else
   {
     // Client connected
-    wdt_reset();
     Avaible();
-    wdt_reset();
     client.loop();
   }
 
+  wdt_enable(WDTO_8S);
   chckBT_event();
   roletyLOOP();
-  wdt_reset();
+  wdt_disable();
 }
