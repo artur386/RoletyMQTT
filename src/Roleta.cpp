@@ -15,10 +15,10 @@ Roleta::Roleta(uint8_t ID, PubSubClient *mqttClient, Adafruit_MCP23017 *MCP_BANK
     this->LAST_STATE_REGISTER = 0x00;
     this->STATE_REGISTER = 0x00;
     this->triger = false;
-    LAST_STATE_REGISTER = this->GetEEprom(STATUS);
-    LAST_COMMAND_REGISTER = this->GetEEprom(COMMAND);
-    STATE_REGISTER = LAST_STATE_REGISTER;
-    COMMAND_REGISTER = LAST_COMMAND_REGISTER;
+    this->LAST_STATE_REGISTER = this->GetEEprom(STATUS);
+    this->LAST_COMMAND_REGISTER = this->GetEEprom(COMMAND);
+    this->STATE_REGISTER = this->LAST_STATE_REGISTER;
+    this->COMMAND_REGISTER = this->LAST_COMMAND_REGISTER;
 }
 
 void Roleta::RelayUP(void)
@@ -30,7 +30,7 @@ void Roleta::RelayUP(void)
 void Roleta::RelayDOWN(void)
 {
     this->MCP_BANK->digitalWrite(this->DIR_RELAY, LOW);
-    delay(50);
+    delay(200);
     this->MCP_BANK->digitalWrite(this->EN_RELAY, LOW);
     this->MoveIsOn = true;
 }
@@ -39,7 +39,7 @@ void Roleta::RelayHALT(void)
     this->MCP_BANK->digitalWrite(this->EN_RELAY, HIGH);
     if (LAST_STATE_REGISTER == STD_CLOSING)
     {
-        delay(100);
+        delay(200);
     }
     this->MCP_BANK->digitalWrite(this->DIR_RELAY, HIGH);
     this->MoveIsOn = false;
