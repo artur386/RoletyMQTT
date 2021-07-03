@@ -2,14 +2,14 @@
 /*
 SYPIALNIA_PARTER_1 0
 SYPIALNIA_PARTER_2 1
-WSCHOD_PIETRO 2
+WSCHÓD_PIĘTRO 2
 SALON_FRONT 3
 SALON_BALKON 4
 KUCHNIA_1 5
 KUCHNIA_2 6
-SYPIALNIA_PIETRO 7
-LAZIENKA 8
-ZACHOD 9
+SYPIALNIA_PIĘTRO 7
+ŁAZIENKA 8
+ZACHÓD 9
 WC 10
 */
 
@@ -80,14 +80,14 @@ PubSubClient client(ethClient);
 Roleta roleta[TOTAL_WINDOW_NUMB] = {
     Roleta(0, &client, &mcp1, 9, 1, 25000, 22000),   //    SYPIALNIA_PARTER_1"
     Roleta(1, &client, &mcp1, 10, 2, 25000, 22000),  //    SYPIALNIA_PARTER_2"
-    Roleta(2, &client, &mcp2, 5, 10, 25000, 22000),  //    LAZIENKA"
+    Roleta(2, &client, &mcp2, 5, 10, 25000, 22000),  //    ŁAZIENKA"
     Roleta(3, &client, &mcp1, 14, 6, 25000, 22000),  //    KUCHNIA_1"
     Roleta(4, &client, &mcp1, 15, 7, 25000, 22000),  //    KUCHNIA_2"
     Roleta(5, &client, &mcp2, 3, 12, 30000, 27000),  //    SALON_FRONT"
     Roleta(6, &client, &mcp1, 13, 5, 25000, 22000),  //    SALON_BALKON"
-    Roleta(7, &client, &mcp1, 11, 3, 25000, 22000),  //    WSCHOD_PIETRO"
-    Roleta(8, &client, &mcp2, 6, 9, 25000, 22000),   //    SYPIALNIA_PIETRO"
-    Roleta(9, &client, &mcp2, 4, 11, 25000, 22000)}; //    ZACHOD"
+    Roleta(7, &client, &mcp1, 11, 3, 25000, 22000),  //    WSCHÓD_PIĘTRO"
+    Roleta(8, &client, &mcp2, 6, 9, 25000, 22000),   //    SYPIALNIA_PIĘTRO"
+    Roleta(9, &client, &mcp2, 4, 11, 25000, 22000)}; //    ZACHÓD"
                                                      // Roleta(10, &client, &mcp2, 0, 15, 22000, 16000)}; //    WC "
 
 void setup()
