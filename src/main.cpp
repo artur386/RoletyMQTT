@@ -323,10 +323,6 @@ void roletyLOOP()
         }
       }
     }
-  }
-  for (size_t i = 0; i < TOTAL_WINDOW_NUMB; i++)
-  {
-    wdt_reset();
     roleta[i].Loop();
     switchPower();
   }
@@ -361,6 +357,7 @@ void chckBT_event()
 void loop()
 {
 
+  wdt_reset();
   if (!client.connected())
   {
     wdt_disable();
@@ -403,10 +400,9 @@ void loop()
     // Client connected
     Avaible();
     client.loop();
+    wdt_enable(WDTO_8S);
   }
 
-  wdt_enable(WDTO_8S);
   chckBT_event();
   roletyLOOP();
-  wdt_disable();
 }
